@@ -439,6 +439,7 @@ function updateTopbar(t){
 let formT=null, editId=null, openH={}, cur='A';
 let workoutTimers={}; // {type: {start, elapsed, interval}}
 let seriesGoals={}; // key: 't-i' => 'V' | 'O'
+let exNotes=LS('trn_ex_notes',{}); // {exName: "note text"}
 
 function buildSeriesInputs(ex,pd,isEdit,t,i,w){
   const ns=ex._series||2;
@@ -522,7 +523,10 @@ function renderW(t){
         <div class="ex-hdr">
           <div class="ex-num" style="background:${w.color}">${i+1}</div>
           <div class="ex-info">
-            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px"><span class="ex-name">${ex.name}</span>${goalBadge||''}</div>
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px;cursor:pointer" onclick="toggleExChart('${t}',${i})">
+              <span class="ex-name">${ex.name}</span>${goalBadge||''}
+              <svg style="width:13px;height:13px;fill:none;stroke:var(--t3);stroke-width:2;stroke-linecap:round;margin-left:4px;transition:transform .18s;${openExChart[t+'-'+i]?'transform:rotate(180deg)':''}" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
             <div class="ex-reps">${ex.reps} opakování</div>
             ${prevTxt?`<div class="ex-prev" style="color:${w.color}">${prevTxt}</div>`:''}
           </div>
@@ -574,8 +578,14 @@ function renderW(t){
           <div class="hist-top" onclick="togH('${s.id}','${t}')">
             <span class="hbadge" style="background:${w.light};color:${w.dark}">${t}</span>
             <span class="hdate">${fmt(s.date)}</span>
-            ${m>0?`<span class="hmx">${m>0?m+' kg max':''}${s.duration?' · '+s.duration+' min':''}</span>`:''}
+            ${(()=>{
+              const plankE=Object.entries(s.exercises).find(([nm,v])=>nm==='PLANK');
+              const plankMax=plankE?Math.max(parseInt(plankE[1].s1rep)||0,parseInt(plankE[1].s2rep)||0):0;
+              const dispMax=m>0?m+' kg max':plankMax>0?fmtSecs(plankMax)+' plank':'';
+              return dispMax||s.duration?`<span class="hmx">${dispMax}${s.duration?' · '+s.duration+' min':''}</span>`:'';
+            })()}
             <div class="hactions" onclick="event.stopPropagation()">
+              ${s.goals&&Object.keys(s.goals).length?`<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:${Object.values(s.goals).includes('V')?'#FEE2E2':'#DCFCE7'};color:${Object.values(s.goals).includes('V')?'#DC2626':'#16A34A'}">${Object.values(s.goals).includes('V')?'⬆ Váha':'⬆ Opak.'}</span>`:''}
               <button class="hbtn" onclick="editSess('${s.id}','${t}')" title="Upravit">${editSVG}</button>
               <button class="hbtn" onclick="delS('${s.id}','${t}')" title="Smazat">${trashSVG}</button>
             </div>
@@ -590,7 +600,10 @@ function renderW(t){
           const pts=isPlank
             ?[...Array(ns)].map((_,si)=>{const r=d['s'+(si+1)+'rep'];return r?'S'+(si+1)+': '+fmtSecs(parseInt(r)||0):null;}).filter(Boolean).join('  ·  ')||'—'
             :[...Array(ns)].map((_,si)=>{const k=d['s'+(si+1)+'kg'],r=d['s'+(si+1)+'rep'];return k?k+'kg×'+(r||'?'):null;}).filter(Boolean).join(' · ');
+          const note=exNotes[ex.name];
           h+=`<div class="hex"><span class="hn">${i+1}</span><span class="hnm">${ex.name}</span><span class="hvl">${pts}</span></div>`;
+          if(note&&!openH[s.id]) {} // shown when expanded
+          if(note&&openH[s.id]) h+=`<div style="padding:3px 14px 5px 38px;font-size:11px;color:var(--t3)">📝 ${note}</div>`;
         });
         h+=`</div></div>`;
       });
@@ -929,7 +942,7 @@ function rRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r
 // ═══════════════════════════════════════════════════════
 // EXERCISE DATABASE SCREEN
 // ═══════════════════════════════════════════════════════
-let editExId=null,openPlan={};
+let editExId=null,openPlan={},openExChart={};
 
 function renderE(){
   const el=document.getElementById('scr-E');
@@ -1463,9 +1476,16 @@ function buildPrChart(pts,color,isPlank,goalPts){
   const trend=last-first;
   const trendTxt=trend>0?`▲ +${isPlank?fmtSecs(Math.round(trend)):Math.round(trend*10)/10}`:trend<0?`▼ ${isPlank?fmtSecs(Math.round(trend)):Math.round(trend*10)/10}`:'→ beze změny';
   const trendColor=trend>0?'#16A34A':trend<0?'#EA580C':'#64748B';
+  // Reps trend
+  const repsVals=pts.map(p=>p.reps||0).filter(r=>r>0);
+  const lastReps=repsVals[repsVals.length-1]||0;
+  const firstReps=repsVals[0]||0;
+  const repsTrend=lastReps-firstReps;
+  const repsLine=(!isPlank&&lastReps>0)?`<span style="font-size:10px;color:var(--t3);margin-left:8px">opak: ${lastReps}${repsTrend!==0?` (${repsTrend>0?'+':''}${repsTrend})`:''}</span>`:'';
+
   return `<div class="pr-chart">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 14px 2px">
-      <span style="font-size:10px;font-weight:600;color:var(--t3)">${pts.length} tréninků</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 14px 2px;flex-wrap:wrap;gap:2px">
+      <span style="font-size:10px;font-weight:600;color:var(--t3)">${pts.length} tréninků${repsLine}</span>
       <span style="font-size:11px;font-weight:700;color:${trendColor}">${trendTxt}</span>
     </div>
     <div style="padding:0 8px 10px;overflow:hidden">
@@ -1482,9 +1502,9 @@ function buildPrChart(pts,color,isPlank,goalPts){
         ${pts.map((p,i)=>{
           const gp=goalPts&&goalPts[i];
           const dc=gp==='V'?'#DC2626':gp==='O'?'#16A34A':gp==='stag'?'#7C3AED':color;
-          const reps=p.reps?` × ${p.reps} opak.`:'';
+          const repsTxt=(!isPlank&&p.reps)?` × ${p.reps} opak.`:'';
           return `<circle cx="${xs[i].toFixed(1)}" cy="${ys[i].toFixed(1)}" r="4" fill="${dc}" stroke="white" stroke-width="1.5"/>
-          <title>${fmt(p.date)}: ${isPlank?fmtSecs(p.v):p.v+' kg'}${reps}</title>`;
+          <title>${fmt(p.date)}: ${isPlank?fmtSecs(p.v):p.v+' kg'}${repsTxt}</title>`;
         }).join('')}
         ${xLabels}
       </svg>
@@ -2064,6 +2084,108 @@ function setSeriesGoal(t,i,goal){
   const btnO=document.getElementById('goal-O-'+t+'-'+i);
   if(btnV) btnV.style.background = seriesGoals[key]==='V'?'#FEE2E2':'var(--bg)';
   if(btnO) btnO.style.background = seriesGoals[key]==='O'?'#DCFCE7':'var(--bg)';
+}
+
+function toggleExChart(t, i){
+  const key=t+'-'+i;
+  openExChart[key]=!openExChart[key];
+  renderW(t);
+  // Scroll to chart after render
+  if(openExChart[key]){
+    setTimeout(()=>{
+      const el=document.getElementById('mini-chart-'+t+'-'+i);
+      if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'});
+    },100);
+  }
+}
+
+function buildMiniExChart(exName, t, color){
+  const ss=histT(t).filter(s=>s.exercises[exName]);
+  const isPlank=exName==='PLANK';
+  const pts=ss.map(s=>{
+    const e=s.exercises[exName]||{};
+    let v,reps,goal;
+    if(isPlank){
+      v=Math.max(parseInt(e.s1rep)||0,parseInt(e.s2rep)||0,parseInt(e.s3rep)||0);
+      reps=v;
+    } else {
+      let bestKg=0,bestRep=0;
+      ['s1','s2','s3'].forEach(sn=>{const kg=parseFloat(e[sn+'kg'])||0;if(kg>bestKg){bestKg=kg;bestRep=parseInt(e[sn+'rep'])||0;}});
+      v=bestKg;reps=bestRep;
+    }
+    goal=s.goals&&s.goals[exName]?s.goals[exName]:null;
+    return{date:s.date,v,reps,goal};
+  }).filter(x=>x.v>0).sort((a,b)=>a.date.localeCompare(b.date));
+  
+  if(pts.length<1) return '<div id="mini-chart-'+t+'-0" style="padding:10px 14px;font-size:12px;color:var(--t3);text-align:center">Zatím žádná data pro graf</div>';
+  if(pts.length<2) return '<div id="mini-chart-'+t+'-0" style="padding:6px 14px 10px;font-size:12px;color:var(--t3);text-align:center">Potřeba alespoň 2 záznamy (máš '+pts.length+')</div>';
+  
+  const goalPts=pts.map((pt,i)=>{
+    if(i===0) return pt.goal;
+    const prev=pts[i-1];
+    const prevGoal=prev.goal;
+    if(!prevGoal) return null;
+    if(prevGoal==='V'&&pt.v>prev.v) return 'V';
+    if(prevGoal==='O'&&pt.reps>prev.reps) return 'O';
+    if(prevGoal&&pt.v<=prev.v&&pt.reps<=prev.reps) return 'stag';
+    return prevGoal;
+  });
+
+  const W=300,H=100,pL=34,pR=8,pT=8,pB=22;
+  const iW=W-pL-pR,iH=H-pT-pB;
+  const vals=pts.map(p=>p.v);
+  const minV=Math.min(...vals),maxV=Math.max(...vals);
+  const range=maxV-minV||1;
+  const xs=pts.map((_,i)=>pL+i/(pts.length-1)*iW);
+  const ys=pts.map(p=>pT+iH-(p.v-minV)/range*iH);
+  const path=xs.map((x,i)=>(i?'L':'M')+x.toFixed(1)+','+ys[i].toFixed(1)).join(' ');
+  const area=path+' L'+xs[xs.length-1].toFixed(1)+','+(pT+iH)+' L'+xs[0].toFixed(1)+','+(pT+iH)+' Z';
+  
+  // Y labels
+  let yLbls='';
+  [minV,maxV].forEach((v,yi)=>{
+    const y=pT+iH-yi*iH;
+    const lbl=isPlank?fmtSecs(Math.round(v)):Math.round(v*10)/10;
+    yLbls+=`<text x="${pL-3}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="7.5" fill="#94A3B8">${lbl}</text>`;
+  });
+  // X labels
+  const xShow=pts.length<=3?pts.map((_,i)=>i):[0,pts.length-1];
+  let xLbls='';
+  xShow.forEach(i=>{
+    xLbls+=`<text x="${xs[i].toFixed(1)}" y="${H-2}" text-anchor="middle" font-size="7.5" fill="#94A3B8">${pts[i].date.slice(5).replace('-','.')}</text>`;
+  });
+  // Dots
+  const dots=pts.map((p,i)=>{
+    const gp=goalPts&&goalPts[i];
+    const dc=gp==='V'?'#DC2626':gp==='O'?'#16A34A':gp==='stag'?'#7C3AED':color;
+    const lbl=isPlank?fmtSecs(p.v):p.v+'kg'+(p.reps?' ×'+p.reps:'');
+    return `<circle cx="${xs[i].toFixed(1)}" cy="${ys[i].toFixed(1)}" r="3.5" fill="${dc}" stroke="white" stroke-width="1.5"><title>${fmt(p.date)}: ${lbl}</title></circle>`;
+  }).join('');
+
+  const last=pts[pts.length-1],first=pts[0];
+  const trend=last.v-first.v;
+  const trendTxt=trend>0?`▲ +${isPlank?fmtSecs(Math.round(trend)):Math.round(trend*10)/10}`:trend<0?`▼ ${isPlank?fmtSecs(Math.round(trend)):Math.round(trend*10)/10}`:'→ beze změny';
+  const trendColor=trend>0?'#16A34A':trend<0?'#EA580C':'#64748B';
+
+  return '<div id="mini-chart-'+t+'-0" style="background:var(--bg);border-top:1px solid var(--bd);padding:6px 8px 4px">'
+    +'<div style="display:flex;justify-content:space-between;padding:0 4px 3px">'
+    +'<span style="font-size:10px;color:var(--t3)">'+(isPlank?'čas':'max váha')+' · '+pts.length+' sesí</span>'
+    +'<span style="font-size:10px;font-weight:700;color:'+trendColor+'">'+trendTxt+'</span>'
+    +'</div>'
+    +'<svg viewBox="0 0 '+W+' '+H+'" width="100%" style="height:'+H+'px;overflow:visible">'
+    +'<defs><linearGradient id="mcg'+exName.length+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+color+'" stop-opacity=".2"/><stop offset="100%" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>'
+    +yLbls
+    +'<path d="'+area+'" fill="url(#mcg'+exName.length+')" />'
+    +'<path d="'+path+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+    +dots+xLbls
+    +'</svg>'
+    +'</div>';
+}
+
+function saveExNote(exName, t, i){
+  const v = document.getElementById('ex-note-'+t+'-'+i)?.value||'';
+  exNotes[exName] = v;
+  SS('trn_ex_notes', exNotes);
 }
 
 function applyGoalHighlights(t){
